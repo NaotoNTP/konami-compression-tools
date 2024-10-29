@@ -213,7 +213,7 @@ int main(int argc, char ** argv) {
 	// If mode is DECOMPRESS or RECOMPRESS, decompress to the output buffer
 	if (mode == DECOMPRESS || mode == RECOMPRESS) {
 		lz_error decompressionResult =
-			lzkn1_decompress(inBuff, inBuffSize, &outBuff, &outBuffSize);
+			nlzss_decompress(inBuff, inBuffSize, &outBuff, &outBuffSize);
 
 		if (decompressionResult != 0) {
 			fprintf(stderr, "Decompression failed with return code %X\n", decompressionResult);
@@ -239,7 +239,7 @@ int main(int argc, char ** argv) {
 		outBuff = malloc(outBuffSize);
 
 		lz_error compressionResult = 
-			lzkn1_compress(inBuff, inBuffSize, outBuff, outBuffSize, &compressedSize);
+			nlzss_compress(inBuff, inBuffSize, outBuff, outBuffSize, &compressedSize);
 
 		if (compressionResult != 0) {
 			fprintf(stderr, "Compression failed with return code %X\n", compressionResult);

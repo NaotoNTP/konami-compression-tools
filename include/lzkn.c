@@ -17,12 +17,12 @@
  * 
  * Returns size of the compressed buffer
  */
-lz_error lzkn1_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t *outBuff, size_t outBuffSize, size_t* compressedSize) {
+lz_error nlzss_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t *outBuff, size_t outBuffSize, size_t* compressedSize) {
 
 	lz_error result = 0;					// default return value (success)
 
-	const int32_t sizeWindow = 0x3FF;		// sliding window (displacement) maximum size
-	const int32_t sizeCopy = 0x21;			// maximum size of the bytes (sting) to copy
+	const int32_t sizeWindow = 0x800;		// sliding window (displacement) maximum size
+	const int32_t sizeCopy = 0x23;			// maximum size of the bytes (string) to copy
 
 	#define FLAG_COPY_MODE1		0x00
 	#define FLAG_COPY_MODE2		0x80
@@ -38,27 +38,32 @@ lz_error lzkn1_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 
 	// Description field helpers
 	uint8_t * descFieldPtr = NULL;
+	uint16_t descFieldVar = 0;
 	int descFieldCurrentBit = 0;
 
-	#define BYTE_FLAG	1
-	#define BYTE_RAW	0
+	#define WORD_FLAG	0
+	#define WORD_RAW	1
 
 	#define PUSH_DESC_FIELD_BIT(BIT)	\
 		if (descFieldPtr == NULL) { \
-			descFieldPtr = outBuff + outBuffPos++; \
-			*descFieldPtr = BIT; \
+			descFieldPtr = outBuff + outBuffPos; \
+			outBuffPos += 2; \
+			descFieldVar = BIT; \
 			descFieldCurrentBit = 1; \
 		} \
 		else { \
-			*descFieldPtr |= (BIT << descFieldCurrentBit++); \
-			if (descFieldCurrentBit >= 8) { \
+			descFieldVar |= (BIT << descFieldCurrentBit++); \
+			if (descFieldCurrentBit >= 16) { \
+				*descFieldPtr = (uint8_t)(descFieldVar >> 8); \
+				descFieldPtr++; \
+				*descFieldPtr = (uint8_t)(descFieldVar & 0xFF); \
 				descFieldPtr = NULL; \
 			} \
 		}
 
 	// Put uncompressed size ...
-	outBuff[outBuffPos++] = inBuffSize >> 8;
-	outBuff[outBuffPos++] = inBuffSize & 0xFF;
+//	outBuff[outBuffPos++] = inBuffSize >> 8;
+//	outBuff[outBuffPos++] = inBuffSize & 0xFF;
 
 	// Main compression loop ...
 	while ((inBuffPos < inBuffSize) && (outBuffPos < outBuffSize)) {
@@ -92,10 +97,11 @@ lz_error lzkn1_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 		int32_t queuedRawCopySize = inBuffPos - inBuffLastCopyPos;
 		uint8_t suggestedMode = 0xFF;
 
-		if ((matchStrSize >= 2) && (matchStrSize <= 5) && (matchStrDisp < 16)) {		// Uncompressed stream copy (Mode 2)
+		/*
+		if ((matchStrSize > 35) && (matchStrDisp <= 16)) {		// Uncompressed stream copy (Mode 2)
 			suggestedMode = FLAG_COPY_MODE2;
 		}
-		else if ((matchStrSize >= 3)) {
+		else */ if ((matchStrSize >= 5)) {
 			suggestedMode = FLAG_COPY_MODE1;
 		}
 
@@ -103,11 +109,12 @@ lz_error lzkn1_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 		//	-- If the copy mode was suggested, but there are raw bytes queued, render them first
 		//	-- If the raw bytes queue is too large to store in a single flag (FLAG_COPY_RAW)
 		//	-- If the input buffer exhausted and should be flushed immidiately
-		if (((suggestedMode != 0xFF) && (queuedRawCopySize >= 1)) 
-				|| (queuedRawCopySize >= 0x47 || (inBuffPos + 1 == inBuffSize))) {
-
+		if (((suggestedMode != 0xFF) && (queuedRawCopySize >= 2)) 
+				/*|| (queuedRawCopySize >= 0x47*/ || (inBuffPos + 2 == inBuffSize)) {
+			
+			/*
 			// If on the last cycle, correct transfer size ...
-			if ((inBuffPos + 1 == inBuffSize)) {
+			if ((inBuffPos + 2 == inBuffSize)) {
 				queuedRawCopySize = inBuffSize - inBuffLastCopyPos;
 			}
 
@@ -123,30 +130,35 @@ lz_error lzkn1_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 
 			// If less than 8 bytes should be transferred, store raw bytes info in the description field directly ...
 			else {
-				for (int32_t i = 0; i < queuedRawCopySize; ++i) {
-					PUSH_DESC_FIELD_BIT(BYTE_RAW);
-					outBuff[outBuffPos++] = inBuff[inBuffLastCopyPos++];
-				}
+			*/
+			
+			for (int32_t i = 0; i < queuedRawCopySize; i += 2) {
+				PUSH_DESC_FIELD_BIT(WORD_RAW);
+				outBuff[outBuffPos++] = inBuff[inBuffLastCopyPos++];
+				outBuff[outBuffPos++] = inBuff[inBuffLastCopyPos++];
 			}
+			
 		}
 
 		// Now, render compression modes, if any was suggested ...
 		if (suggestedMode == FLAG_COPY_MODE1) {
-			PUSH_DESC_FIELD_BIT(BYTE_FLAG);
-			outBuff[outBuffPos++] = (FLAG_COPY_MODE1) | ((matchStrDisp & 0x300) >> 3) | (matchStrSize - 3);
+			PUSH_DESC_FIELD_BIT(WORD_FLAG);
+			outBuff[outBuffPos++] = (((matchStrDisp - 1) & 0x700) >> 3) | (matchStrSize - 4);
 			outBuff[outBuffPos++] = (matchStrDisp & 0xFF);
 			inBuffPos += matchStrSize;
 			inBuffLastCopyPos = inBuffPos;
 		}
 
+		/*
 		else if (suggestedMode == FLAG_COPY_MODE2) {
 			PUSH_DESC_FIELD_BIT(BYTE_FLAG);
 			outBuff[outBuffPos++] = (FLAG_COPY_MODE2) | (matchStrDisp & 0xF) | ((matchStrSize - 2) << 4);
 			inBuffPos += matchStrSize;
 			inBuffLastCopyPos = inBuffPos;
 		}
+		*/
 		else {
-			inBuffPos += 1;
+			inBuffPos += 2;
 		}
 
 	}
@@ -160,8 +172,9 @@ lz_error lzkn1_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 	}
 
 	// Finalize compression buffer
-	PUSH_DESC_FIELD_BIT(BYTE_FLAG);
-	outBuff[outBuffPos++] = 0x1F;
+	PUSH_DESC_FIELD_BIT(WORD_FLAG);
+	outBuff[outBuffPos++] = 0x00;
+	outBuff[outBuffPos++] = 0x00;
 
 	// Return compressed data size
 	*compressedSize = outBuffPos;
@@ -173,11 +186,11 @@ lz_error lzkn1_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 
 
 /**
- * Compression function
+ * Decompression function
  * 
- * Returns size of the compressed buffer
+ * Returns size of the decompressed buffer
  */
-lz_error lzkn1_decompress(uint8_t *inBuff, size_t inBuffSize, uint8_t** outBuffPtr, size_t *decompressedSize) {
+lz_error nlzss_decompress(uint8_t *inBuff, size_t inBuffSize, uint8_t** outBuffPtr, size_t *decompressedSize) {
 	
 	lz_error result = 0;
 

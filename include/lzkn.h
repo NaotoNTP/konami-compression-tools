@@ -19,7 +19,7 @@ typedef uint32_t lz_error;
 #define LZ_OUTBUFF_OVERFLOW			0x8
 #define LZ_OUTBUFF_UNDERFLOW		0x10
 
-lz_error lzkn1_compress(
+lz_error nlzss_compress(
 	const uint8_t *inBuff, 
 	const size_t inBuffSize, 
 	uint8_t *outBuff, 
@@ -27,7 +27,7 @@ lz_error lzkn1_compress(
 	size_t *compressedSize
 );
 
-lz_error lzkn1_decompress(
+lz_error nlzss_decompress(
 	uint8_t *inBuff, 
 	size_t inBuffSize, 
 	uint8_t **outBuffPtr, 

@@ -90,10 +90,10 @@ int validateDataRecompression(const uint8_t * sourceData, size_t sourceDataSize)
 	size_t compressedSize;
 
 	lz_error compressionResult = 
-		lzkn1_compress(sourceData, sourceDataSize, compressedData, compressedBufferSize, &compressedSize);
+		nlzss_compress(sourceData, sourceDataSize, compressedData, compressedBufferSize, &compressedSize);
 
 	if (compressionResult != 0) {
-		printf("FAIL: lzkn1_compress() returned %X\n", compressionResult);
+		printf("FAIL: nlzss_compress() returned %X\n", compressionResult);
 		return -1;
 	}
 
@@ -102,10 +102,10 @@ int validateDataRecompression(const uint8_t * sourceData, size_t sourceDataSize)
 	size_t decompressedSize;
 
 	lz_error decompressionResult =
-		lzkn1_decompress(compressedData, compressedSize, &decompressedData, &decompressedSize);
+		nlzss_decompress(compressedData, compressedSize, &decompressedData, &decompressedSize);
 
 	if ((decompressionResult != 0) || (decompressedData == NULL)) {
-		printf("FAIL: lzkn1_decompress() returned %X\n", decompressionResult);
+		printf("FAIL: nlzss_decompress() returned %X\n", decompressionResult);
 
 		free(compressedData);
 		free(decompressedData);
