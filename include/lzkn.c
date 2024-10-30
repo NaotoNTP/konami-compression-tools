@@ -21,12 +21,12 @@ lz_error nlzss_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 
 	lz_error result = 0;					// default return value (success)
 
-	const int32_t sizeWindow = 0x800;		// sliding window (displacement) maximum size
-	const int32_t sizeCopy = 0x23;			// maximum size of the bytes (string) to copy
+	const int32_t sizeWindow = 0x1000;		// sliding window (displacement) maximum size
+	const int32_t sizeCopy = 0x100;			// maximum size of the bytes (string) to copy
 
-	#define FLAG_COPY_MODE1		0x00
-	#define FLAG_COPY_MODE2		0x80
-	#define FLAG_COPY_RAW		0xC0
+	#define FLAG_COPY_MODE1		0x80
+	#define FLAG_COPY_MODE2		0x00
+	#define FLAG_COPY_RAW		0x40
 
 	int32_t inBuffPos = 0;					// input buffer position
 	int32_t inBuffLastCopyPos = 0;			// position of the last copied byte to the uncompressed stream
@@ -41,29 +41,30 @@ lz_error nlzss_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 	uint16_t descFieldVar = 0;
 	int descFieldCurrentBit = 0;
 
-	#define WORD_FLAG	0
-	#define WORD_RAW	1
+	#define BYTE_FLAG	0
+	#define BYTE_RAW	1
 
 	#define PUSH_DESC_FIELD_BIT(BIT)	\
 		if (descFieldPtr == NULL) { \
 			descFieldPtr = outBuff + outBuffPos; \
 			outBuffPos += 2; \
-			descFieldVar = BIT; \
-			descFieldCurrentBit = 1; \
+			descFieldCurrentBit = 15; \
+			descFieldVar = BIT << descFieldCurrentBit--; \
 		} \
 		else { \
-			descFieldVar |= (BIT << descFieldCurrentBit++); \
-			if (descFieldCurrentBit >= 16) { \
-				*descFieldPtr = (uint8_t)(descFieldVar >> 8); \
-				descFieldPtr++; \
-				*descFieldPtr = (uint8_t)(descFieldVar & 0xFF); \
+			descFieldVar |= (BIT << descFieldCurrentBit--); \
+			*descFieldPtr = (descFieldVar >> 8); \
+			descFieldPtr++; \
+			*descFieldPtr = (descFieldVar & 0xFF); \
+			descFieldPtr--; \
+			if (descFieldCurrentBit < 0) { \
 				descFieldPtr = NULL; \
 			} \
 		}
 
 	// Put uncompressed size ...
-//	outBuff[outBuffPos++] = inBuffSize >> 8;
-//	outBuff[outBuffPos++] = inBuffSize & 0xFF;
+	outBuff[outBuffPos++] = inBuffSize >> 8;
+	outBuff[outBuffPos++] = inBuffSize & 0xFF;
 
 	// Main compression loop ...
 	while ((inBuffPos < inBuffSize) && (outBuffPos < outBuffSize)) {
@@ -96,12 +97,11 @@ lz_error nlzss_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 		// Now, decide on the compression mode ...
 		int32_t queuedRawCopySize = inBuffPos - inBuffLastCopyPos;
 		uint8_t suggestedMode = 0xFF;
-
-		/*
-		if ((matchStrSize > 35) && (matchStrDisp <= 16)) {		// Uncompressed stream copy (Mode 2)
+		
+		if ((matchStrSize >= 2) && /* (matchStrSize <= 5) && */ (matchStrDisp <= 32)) {		// Uncompressed stream copy (Mode 2)
 			suggestedMode = FLAG_COPY_MODE2;
 		}
-		else */ if ((matchStrSize >= 5)) {
+		else if (matchStrSize >= 3) {
 			suggestedMode = FLAG_COPY_MODE1;
 		}
 
@@ -109,56 +109,77 @@ lz_error nlzss_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 		//	-- If the copy mode was suggested, but there are raw bytes queued, render them first
 		//	-- If the raw bytes queue is too large to store in a single flag (FLAG_COPY_RAW)
 		//	-- If the input buffer exhausted and should be flushed immidiately
-		if (((suggestedMode != 0xFF) && (queuedRawCopySize >= 2)) 
-				/*|| (queuedRawCopySize >= 0x47*/ || (inBuffPos + 2 == inBuffSize)) {
-			
+		
+		if (((suggestedMode != 0xFF) && (queuedRawCopySize >= 1)) 
+				/*|| (queuedRawCopySize >= 0x46*/ || (inBuffPos + 1 == inBuffSize)) {
 			/*
 			// If on the last cycle, correct transfer size ...
-			if ((inBuffPos + 2 == inBuffSize)) {
+			if ((inBuffPos + 1 == inBuffSize)) {
 				queuedRawCopySize = inBuffSize - inBuffLastCopyPos;
 			}
-
+			
 			// When transferring more than 8 bytes, use "FLAG_COPY_RAW" flag instead of plain bit fields
+			// Note: we avoid doing this on the last bit of the decription field, as there are no bits left to fit the command flag
 			if (queuedRawCopySize > 8) {
 				PUSH_DESC_FIELD_BIT(BYTE_FLAG);					// set the following data as a flag
-				outBuff[outBuffPos++] = (FLAG_COPY_RAW) | (queuedRawCopySize - 8);
+				outBuff[outBuffPos++] = (FLAG_COPY_RAW) | (queuedRawCopySize - 7);
 
 				for (int32_t i = 0; i < queuedRawCopySize; ++i) {
 					outBuff[outBuffPos++] = inBuff[inBuffLastCopyPos++];
 				}
 			}
-
-			// If less than 8 bytes should be transferred, store raw bytes info in the description field directly ...
-			else {
-			*/
 			
-			for (int32_t i = 0; i < queuedRawCopySize; i += 2) {
-				PUSH_DESC_FIELD_BIT(WORD_RAW);
-				outBuff[outBuffPos++] = inBuff[inBuffLastCopyPos++];
-				outBuff[outBuffPos++] = inBuff[inBuffLastCopyPos++];
-			}
+
+			// If 8 or fewer bytes should be transferred, store raw bytes info in the description field directly ...
+			else {*/
+				for (int32_t i = 0; i < queuedRawCopySize; i += 1) {
+					PUSH_DESC_FIELD_BIT(BYTE_RAW);
+					outBuff[outBuffPos++] = inBuff[inBuffLastCopyPos++];
+				}
 			
 		}
 
 		// Now, render compression modes, if any was suggested ...
-		if (suggestedMode == FLAG_COPY_MODE1) {
-			PUSH_DESC_FIELD_BIT(WORD_FLAG);
-			outBuff[outBuffPos++] = (((matchStrDisp - 1) & 0x700) >> 3) | (matchStrSize - 4);
-			outBuff[outBuffPos++] = (matchStrDisp & 0xFF);
-			inBuffPos += matchStrSize;
-			inBuffLastCopyPos = inBuffPos;
-		}
-
-		/*
-		else if (suggestedMode == FLAG_COPY_MODE2) {
+		if (suggestedMode == FLAG_COPY_MODE2) {
 			PUSH_DESC_FIELD_BIT(BYTE_FLAG);
-			outBuff[outBuffPos++] = (FLAG_COPY_MODE2) | (matchStrDisp & 0xF) | ((matchStrSize - 2) << 4);
+
+			if (matchStrSize <= 4) {
+				outBuff[outBuffPos++] = (FLAG_COPY_MODE2) | (((matchStrDisp - 1) & 0x1F) << 2) | (matchStrSize - 1);
+			}
+			else {
+				outBuff[outBuffPos++] = (FLAG_COPY_MODE2) | (((matchStrDisp - 1) & 0x1F) << 2);
+				outBuff[outBuffPos++] = (matchStrSize - 1);
+			}
+
+
+		//	outBuff[outBuffPos++] = (FLAG_COPY_MODE2) | ((matchStrDisp - 1) & 0x7F);
+		//	outBuff[outBuffPos++] = (matchStrSize - 4);
 			inBuffPos += matchStrSize;
 			inBuffLastCopyPos = inBuffPos;
 		}
-		*/
+		else if (suggestedMode == FLAG_COPY_MODE1) {
+			PUSH_DESC_FIELD_BIT(BYTE_FLAG);
+			
+			if (matchStrSize <= 9) {
+				outBuff[outBuffPos++] = (FLAG_COPY_MODE1) | (((matchStrDisp - 1) & 0xF00) >> 5) | (matchStrSize - 2);
+				outBuff[outBuffPos++] = ((matchStrDisp - 1) & 0xFF);
+			} 
+			else {
+				outBuff[outBuffPos++] = (FLAG_COPY_MODE1) | (((matchStrDisp - 1) & 0xF00) >> 5);
+				outBuff[outBuffPos++] = ((matchStrDisp - 1) & 0xFF);
+				outBuff[outBuffPos++] = (matchStrSize - 1);
+			}
+		
+		
+		//	outBuff[outBuffPos++] = (FLAG_COPY_MODE1) | ((matchStrSize - 4) << 2) | (((matchStrDisp - 1) & 0x300) >> 8);
+		//	outBuff[outBuffPos++] = ((matchStrDisp - 1) & 0xFF);
+
+			inBuffPos += matchStrSize;
+			inBuffLastCopyPos = inBuffPos;
+		
+		}
 		else {
-			inBuffPos += 2;
+			inBuffPos += 1;
 		}
 
 	}
@@ -172,7 +193,7 @@ lz_error nlzss_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 	}
 
 	// Finalize compression buffer
-	PUSH_DESC_FIELD_BIT(WORD_FLAG);
+	PUSH_DESC_FIELD_BIT(BYTE_FLAG);
 	outBuff[outBuffPos++] = 0x00;
 	outBuff[outBuffPos++] = 0x00;
 

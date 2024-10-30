@@ -186,7 +186,7 @@ int main(int argc, char ** argv) {
 
 		// Otherwise, output file name is the same as input, but with the extension appended
 		else {
-			const char * outputPathExtension = (mode == COMPRESS) ? ".lzkn1" : ".unc";
+			const char * outputPathExtension = (mode == COMPRESS) ? ".nlzss" : ".unc";
 
 			outputPath = concatStrings(inputPath, outputPathExtension);
 		}
