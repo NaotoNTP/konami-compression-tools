@@ -98,7 +98,7 @@ lz_error nlzss_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 		int32_t queuedRawCopySize = inBuffPos - inBuffLastCopyPos;
 		uint8_t suggestedMode = 0xFF;
 		
-		if ((matchStrSize >= 2) && /* (matchStrSize <= 5) && */ (matchStrDisp <= 32)) {		// Uncompressed stream copy (Mode 2)
+		if ((matchStrSize >= 2) && (matchStrDisp <= 32)) {		// Uncompressed stream copy (Mode 2)
 			suggestedMode = FLAG_COPY_MODE2;
 		}
 		else if (matchStrSize >= 3) {
@@ -107,36 +107,12 @@ lz_error nlzss_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 
 		// Initiate raw bytes transfer until the current location in the following cases:
 		//	-- If the copy mode was suggested, but there are raw bytes queued, render them first
-		//	-- If the raw bytes queue is too large to store in a single flag (FLAG_COPY_RAW)
 		//	-- If the input buffer exhausted and should be flushed immidiately
-		
-		if (((suggestedMode != 0xFF) && (queuedRawCopySize >= 1)) 
-				/*|| (queuedRawCopySize >= 0x46*/ || (inBuffPos + 1 == inBuffSize)) {
-			/*
-			// If on the last cycle, correct transfer size ...
-			if ((inBuffPos + 1 == inBuffSize)) {
-				queuedRawCopySize = inBuffSize - inBuffLastCopyPos;
-			}
-			
-			// When transferring more than 8 bytes, use "FLAG_COPY_RAW" flag instead of plain bit fields
-			// Note: we avoid doing this on the last bit of the decription field, as there are no bits left to fit the command flag
-			if (queuedRawCopySize > 8) {
-				PUSH_DESC_FIELD_BIT(BYTE_FLAG);					// set the following data as a flag
-				outBuff[outBuffPos++] = (FLAG_COPY_RAW) | (queuedRawCopySize - 7);
-
-				for (int32_t i = 0; i < queuedRawCopySize; ++i) {
-					outBuff[outBuffPos++] = inBuff[inBuffLastCopyPos++];
-				}
-			}
-			
-
-			// If 8 or fewer bytes should be transferred, store raw bytes info in the description field directly ...
-			else {*/
+		if (((suggestedMode != 0xFF) && (queuedRawCopySize >= 1)) || (inBuffPos + 1 == inBuffSize)) {
 				for (int32_t i = 0; i < queuedRawCopySize; i += 1) {
 					PUSH_DESC_FIELD_BIT(BYTE_RAW);
 					outBuff[outBuffPos++] = inBuff[inBuffLastCopyPos++];
 				}
-			
 		}
 
 		// Now, render compression modes, if any was suggested ...
