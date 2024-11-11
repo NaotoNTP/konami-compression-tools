@@ -21,7 +21,7 @@ lz_error nlzss_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 
 	lz_error result = 0;					// default return value (success)
 
-	const int32_t sizeWindow = 0x2000;		// sliding window (displacement) maximum size
+	const int32_t sizeWindow = 0x1000;		// sliding window (displacement) maximum size
 	const int32_t sizeCopy = 0x100;			// maximum size of the bytes (string) to copy
 
 	#define FLAG_COPY_MODE1		0
@@ -40,18 +40,18 @@ lz_error nlzss_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 	uint16_t descFieldVar = 0;
 	int descFieldCurrentBit = 0;
 
-	#define BYTE_FLAG	0
-	#define BYTE_RAW	1
+	#define BYTE_FLAG	1
+	#define BYTE_RAW	0
 
 	#define PUSH_DESC_FIELD_BIT(BIT)	\
 		if (descFieldPtr == NULL) { \
 			descFieldPtr = outBuff + outBuffPos++; \
-			*descFieldPtr = BIT; \
-			descFieldCurrentBit = 1; \
+			*descFieldPtr = BIT << 7; \
+			descFieldCurrentBit = 6; \
 		} \
 		else { \
-			*descFieldPtr |= (BIT << descFieldCurrentBit++); \
-			if (descFieldCurrentBit >= 8) { \
+			*descFieldPtr |= (BIT << descFieldCurrentBit--); \
+			if (descFieldCurrentBit < 0) { \
 				descFieldPtr = NULL; \
 			} \
 		}
@@ -59,13 +59,6 @@ lz_error nlzss_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 	// Put uncompressed size ...
 	outBuff[outBuffPos++] = inBuffSize >> 8;
 	outBuff[outBuffPos++] = inBuffSize & 0xFF;
-
-	int matchNearShort = 0;
-	int matchNearLong = 0;
-	int matchFarShort = 0;
-	int matchFarLong = 0;
-
-	int maxCopySize = 0;
 
 	// Main compression loop ...
 	while ((inBuffPos < inBuffSize) && (outBuffPos < outBuffSize)) {
@@ -99,7 +92,7 @@ lz_error nlzss_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 		int32_t queuedRawCopySize = inBuffPos - inBuffLastCopyPos;
 		uint8_t suggestedMode = 0xFF;
 		
-		if ((matchStrSize >= 2) && (matchStrDisp <= 64)) {		// Uncompressed stream copy (Mode 2)
+		if ((matchStrDisp <= 64) && (matchStrSize >= 2)) {		// Uncompressed stream copy (Mode 2)
 			suggestedMode = FLAG_COPY_MODE2;
 		}
 		else if (matchStrSize >= 3) {
@@ -108,13 +101,15 @@ lz_error nlzss_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 
 		// Initiate raw bytes transfer until the current location in the following cases:
 		//	-- If the copy mode was suggested, but there are raw bytes queued, render them first
+		//	-- If the raw bytes queue is too large to store in a single flag (FLAG_COPY_RAW)
 		//	-- If the input buffer exhausted and should be flushed immidiately
 		if (((suggestedMode != 0xFF) && (queuedRawCopySize >= 1)) || (inBuffPos + 1 == inBuffSize)) {
-				for (int32_t i = 0; i < queuedRawCopySize; i += 1) {
+				for (int32_t i = 0; i < queuedRawCopySize; ++i) {
 					PUSH_DESC_FIELD_BIT(BYTE_RAW);
 					outBuff[outBuffPos++] = inBuff[inBuffLastCopyPos++];
 				}
-		}
+			}
+		
 
 		// Now, render compression modes, if any was suggested ...
 		if (suggestedMode == FLAG_COPY_MODE2) {
@@ -122,16 +117,12 @@ lz_error nlzss_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 			PUSH_DESC_FIELD_BIT(FLAG_COPY_MODE2);
 
 			if (matchStrSize <= 4) {
-				outBuff[outBuffPos++] = (((matchStrDisp - 1) & 0x1F) << 2) | (matchStrSize - 1);
-				matchNearShort++;
+				outBuff[outBuffPos++] = (((matchStrDisp - 1) & 0x3F) << 2) | (matchStrSize - 1);
 			}
 			else {
-				outBuff[outBuffPos++] = (((matchStrDisp - 1) & 0x1F) << 2);
+				outBuff[outBuffPos++] = (((matchStrDisp - 1) & 0x3F) << 2);
 				outBuff[outBuffPos++] = (matchStrSize - 1);
-				matchNearLong++;
 			}
-
-			maxCopySize = (matchStrSize > maxCopySize) ? matchStrSize : maxCopySize;
 
 		//	outBuff[outBuffPos++] = (FLAG_COPY_MODE2) | ((matchStrDisp - 1) & 0x7F);
 		//	outBuff[outBuffPos++] = (matchStrSize - 4);
@@ -142,19 +133,15 @@ lz_error nlzss_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 			PUSH_DESC_FIELD_BIT(BYTE_FLAG);
 			PUSH_DESC_FIELD_BIT(FLAG_COPY_MODE1);
 			
-			if (matchStrSize <= 8) {
-				outBuff[outBuffPos++] = (((matchStrDisp - 1) & 0xF00) >> 5) | (matchStrSize - 1);
+			if (matchStrSize <= 17) {
+				outBuff[outBuffPos++] = (((matchStrDisp - 1) & 0xF00) << 4) | (matchStrSize - 2);
 				outBuff[outBuffPos++] = ((matchStrDisp - 1) & 0xFF);
-				matchFarShort++;
 			} 
 			else {
-				outBuff[outBuffPos++] = (((matchStrDisp - 1) & 0xF00) >> 5);
+				outBuff[outBuffPos++] = (((matchStrDisp - 1) & 0xF00) << 4);
 				outBuff[outBuffPos++] = ((matchStrDisp - 1) & 0xFF);
 				outBuff[outBuffPos++] = (matchStrSize - 1);
-				matchFarLong++;
 			}
-		
-			maxCopySize = (matchStrSize > maxCopySize) ? matchStrSize : maxCopySize;
 		
 		//	outBuff[outBuffPos++] = (FLAG_COPY_MODE1) | ((matchStrSize - 4) << 2) | (((matchStrDisp - 1) & 0x300) >> 8);
 		//	outBuff[outBuffPos++] = ((matchStrDisp - 1) & 0xFF);
@@ -179,21 +166,15 @@ lz_error nlzss_compress(const uint8_t *inBuff, const size_t inBuffSize, uint8_t 
 
 	// Finalize compression buffer
 	PUSH_DESC_FIELD_BIT(BYTE_FLAG);
-	outBuff[outBuffPos++] = 0x00;
+	PUSH_DESC_FIELD_BIT(FLAG_COPY_MODE1);
+	outBuff[outBuffPos++] = 0xFC;
 	outBuff[outBuffPos++] = 0x00;
 
 	// Return compressed data size
 	*compressedSize = outBuffPos;
 
-	printf("\nNearby Dictionary Matches (Short): %d", matchNearShort);
-	printf("\nNearby Dictionary Matches (Long): %d", matchNearLong);
-	printf("\nFar Dictionary Matches (Short): %d", matchFarShort);
-	printf("\nFar Dictionary Matches (Long): %d", matchFarLong);
-
-	printf("\n\nMax Copy Length: %d", maxCopySize);
 
 	return result;
-
 }
 
 
